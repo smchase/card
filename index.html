@@ -22,23 +22,31 @@
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { overflow: hidden; background: #0a0a0a; }
         canvas { display: block; }
-        #hint {
+        #loader {
             position: fixed;
-            bottom: 32px;
-            left: 50%;
-            transform: translateX(-50%);
-            color: rgba(255,255,255,0.3);
-            font-family: 'EB Garamond', serif;
-            font-size: 13px;
-            letter-spacing: 3px;
-            text-transform: uppercase;
-            pointer-events: none;
-            transition: opacity 1.5s ease;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #0a0a0a;
+            z-index: 100;
+            transition: opacity 0.6s ease;
         }
+        #loader.hidden { opacity: 0; pointer-events: none; }
+        #loader::after {
+            content: '';
+            width: 24px;
+            height: 24px;
+            border: 2px solid rgba(255,255,255,0.1);
+            border-top-color: rgba(255,255,255,0.4);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
-    <div id="hint">Click & drag to rotate</div>
+    <div id="loader"></div>
     <script type="importmap">
     {
         "imports": {
@@ -68,22 +76,19 @@
         controls.dampingFactor = 0.05;
         controls.enableZoom = true;
         controls.minDistance = 2.5;
-        controls.maxDistance = 8;
+        controls.maxDistance = 12;
         controls.enablePan = false;
-
-        let hintVisible = true;
-        controls.addEventListener('start', () => {
-            if (hintVisible) {
-                document.getElementById('hint').style.opacity = '0';
-                hintVisible = false;
-            }
-        });
 
         const cardWidth = 3.5;
         const cardHeight = 2.0;
         const cardDepth = 0.02;
         const texSize = 2048;
         const texH = Math.round(texSize * (cardHeight / cardWidth));
+
+        const aspect = window.innerWidth / window.innerHeight;
+        const neededFov = 2 * Math.atan((cardWidth * 1.1) / (2 * 5 * aspect)) * (180 / Math.PI);
+        camera.fov = Math.max(35, neededFov);
+        camera.updateProjectionMatrix();
 
         function hash(x, y) {
             let n = x * 374761393 + y * 668265263;
@@ -305,7 +310,8 @@
             return new THREE.CanvasTexture(canvas);
         }
 
-        await document.fonts.ready;
+        await document.fonts.load('400 16px "EB Garamond"');
+        await document.fonts.load('400 16px "Mrs Saint Delafield"');
 
         const frontColor = createColorMap(texSize, texH, drawFrontText);
         const frontNormal = heightToNormals(createHeightMap(texSize, texH, drawFrontText), 3.5);
@@ -551,9 +557,12 @@
         }
 
         animate();
+        document.getElementById('loader').classList.add('hidden');
 
         window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
+            const a = window.innerWidth / window.innerHeight;
+            camera.aspect = a;
+            camera.fov = Math.max(35, 2 * Math.atan((cardWidth * 1.1) / (2 * 5 * a)) * (180 / Math.PI));
             camera.updateProjectionMatrix();
             renderer.setSize(window.innerWidth, window.innerHeight);
         });
