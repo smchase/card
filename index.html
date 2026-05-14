@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Business Card</title>
+    <style>
+        @font-face {
+            font-family: 'EB Garamond';
+            font-style: normal;
+            font-weight: 400 700;
+            font-display: block;
+            src: url(./eb-garamond.woff2) format('woff2');
+        }
+        @font-face {
+            font-family: 'Mrs Saint Delafield';
+            font-style: normal;
+            font-weight: 400;
+            font-display: block;
+            src: url(./mrs-saint-delafield.woff2) format('woff2');
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { overflow: hidden; background: #0a0a0a; }
+        canvas { display: block; }
+        #hint {
+            position: fixed;
+            bottom: 32px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255,255,255,0.3);
+            font-family: 'EB Garamond', serif;
+            font-size: 13px;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            pointer-events: none;
+            transition: opacity 1.5s ease;
+        }
+    </style>
+</head>
+<body>
+    <div id="hint">Click & drag to rotate</div>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.162.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.162.0/examples/jsm/"
+        }
+    }
+    </script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        const scene = new THREE.Scene();
+
+        const camera = new THREE.PerspectiveCamera(35, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.set(0, 0, 5);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.3;
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.enableZoom = true;
+        controls.minDistance = 2.5;
+        controls.maxDistance = 8;
+        controls.enablePan = false;
+
+        let hintVisible = true;
+        controls.addEventListener('start', () => {
+            if (hintVisible) {
+                document.getElementById('hint').style.opacity = '0';
+                hintVisible = false;
+            }
+        });
+
+        const cardWidth = 3.5;
+        const cardHeight = 2.0;
+        const cardDepth = 0.02;
+        const texSize = 2048;
+        const texH = Math.round(texSize * (cardHeight / cardWidth));
+
+        function hash(x, y) {
+            let n = x * 374761393 + y * 668265263;
+            n = (n ^ (n >> 13)) * 1274126177;
+            n = n ^ (n >> 16);
+            return (n & 0x7fffffff) / 0x7fffffff;
+        }
+
+        function valueNoise(x, y) {
+            const ix = Math.floor(x);
+            const iy = Math.floor(y);
+            const fx = x - ix;
+            const fy = y - iy;
+
+            const sx = fx * fx * (3 - 2 * fx);
+            const sy = fy * fy * (3 - 2 * fy);
+
+            const v00 = hash(ix, iy);
+            const v10 = hash(ix + 1, iy);
+            const v01 = hash(ix, iy + 1);
+            const v11 = hash(ix + 1, iy + 1);
+
+            const a = v00 + sx * (v10 - v00);
+            const b = v01 + sx * (v11 - v01);
+            return a + sy * (b - a);
+        }
+
+        function fbm(x, y, octaves) {
+            let value = 0;
+            let amplitude = 1;
+            let frequency = 1;
+            let total = 0;
+            for (let i = 0; i < octaves; i++) {
+                value += valueNoise(x * frequency, y * frequency) * amplitude;
+                total += amplitude;
+                amplitude *= 0.5;
+                frequency *= 2.1;
+            }
+            return value / total;
+        }
+
+        function eggshellBump(x, y) {
+            const n1 = fbm(x, y, 4);
+            const shaped = Math.pow(n1, 1.2);
+            const n2 = fbm(x * 3.5 + 50, y * 3.5 + 50, 3);
+            const detail = n2 * 0.2;
+            return shaped * 0.8 + detail;
+        }
+
+        function addEggshellPattern(data, width, height) {
+            const scale = 0.07;
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const i = (y * width + x) * 4;
+                    const n = eggshellBump(x * scale, y * scale);
+                    const tint = (n - 0.5) * 3;
+                    data[i] += tint;
+                    data[i + 1] += tint - 0.2;
+                    data[i + 2] += tint - 0.5;
+                }
+            }
+        }
+
+        function addEggshellHeight(data, width, height) {
+            const scale = 0.07;
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const i = (y * width + x) * 4;
+                    const n = eggshellBump(x * scale, y * scale);
+                    const bump = (n - 0.45) * 10;
+                    data[i] += bump;
+                    data[i + 1] += bump;
+                    data[i + 2] += bump;
+                }
+            }
+        }
+
+        function drawFrontText(ctx, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.textBaseline = 'middle';
+
+            const marginLeft = width * 0.08;
+            const marginRight = width * 0.92;
+
+            ctx.textAlign = 'left';
+            ctx.font = `600 ${height * 0.095}px "EB Garamond", "Garamond", serif`;
+            ctx.fillText('Simon Chase', marginLeft, height * 0.28);
+
+            ctx.font = `400 ${height * 0.04}px "EB Garamond", "Garamond", serif`;
+            ctx.fillText('Software Engineer', marginLeft, height * 0.40);
+            ctx.fillText('New York, NY', marginLeft, height * 0.48);
+
+            ctx.textAlign = 'right';
+            ctx.font = `400 ${height * 0.033}px "EB Garamond", "Garamond", serif`;
+            ctx.fillText('hi@simonchase.com', marginRight, height * 0.64);
+            ctx.fillText('linkedin.com/in/simon-chase', marginRight, height * 0.72);
+            ctx.fillText('github.com/smchase', marginRight, height * 0.80);
+        }
+
+        function drawBackText(ctx, width, height, color) {
+            ctx.fillStyle = color;
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'alphabetic';
+
+            ctx.font = `${height * 0.3}px "Mrs Saint Delafield", cursive`;
+            const metrics = ctx.measureText('SC');
+
+            const visualLeft = -metrics.actualBoundingBoxLeft;
+            const visualRight = metrics.actualBoundingBoxRight;
+            const visualTop = metrics.actualBoundingBoxAscent;
+            const visualBottom = -metrics.actualBoundingBoxDescent;
+            const visualWidth = visualRight - visualLeft;
+            const visualHeight = visualTop - visualBottom;
+
+            const x = (width - visualWidth) / 2 - visualLeft;
+            const y = (height - visualHeight) / 2 + visualTop;
+
+            ctx.fillText('SC', x, y);
+        }
+
+        function createColorMap(width, height, drawText) {
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#f2ece2';
+            ctx.fillRect(0, 0, width, height);
+
+            const imageData = ctx.getImageData(0, 0, width, height);
+            addEggshellPattern(imageData.data, width, height);
+            ctx.putImageData(imageData, 0, 0);
+
+            drawText(ctx, width, height, '#252018');
+
+            const tex = new THREE.CanvasTexture(canvas);
+            tex.colorSpace = THREE.SRGBColorSpace;
+            return tex;
+        }
+
+        function createHeightMap(width, height, drawText) {
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#808080';
+            ctx.fillRect(0, 0, width, height);
+
+            const imageData = ctx.getImageData(0, 0, width, height);
+            addEggshellHeight(imageData.data, width, height);
+            ctx.putImageData(imageData, 0, 0);
+
+            drawText(ctx, width, height, '#b8b8b8');
+            return canvas;
+        }
+
+        function heightToNormals(heightCanvas, strength) {
+            const width = heightCanvas.width;
+            const height = heightCanvas.height;
+            const heightData = heightCanvas.getContext('2d').getImageData(0, 0, width, height).data;
+
+            const normalCanvas = document.createElement('canvas');
+            normalCanvas.width = width;
+            normalCanvas.height = height;
+            const nCtx = normalCanvas.getContext('2d');
+            const normalImageData = nCtx.createImageData(width, height);
+            const nData = normalImageData.data;
+
+            function getH(x, y) {
+                x = Math.max(0, Math.min(width - 1, x));
+                y = Math.max(0, Math.min(height - 1, y));
+                return heightData[(y * width + x) * 4] / 255.0;
+            }
+
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const tl = getH(x-1,y-1), t = getH(x,y-1), tr = getH(x+1,y-1);
+                    const l = getH(x-1,y), r = getH(x+1,y);
+                    const bl = getH(x-1,y+1), b = getH(x,y+1), br = getH(x+1,y+1);
+
+                    const dx = (tr + 2*r + br) - (tl + 2*l + bl);
+                    const dy = (bl + 2*b + br) - (tl + 2*t + tr);
+
+                    let nx = -dx * strength, ny = -dy * strength, nz = 1.0;
+                    const len = Math.sqrt(nx*nx + ny*ny + nz*nz);
+                    nx /= len; ny /= len; nz /= len;
+
+                    const i = (y * width + x) * 4;
+                    nData[i]     = Math.round((nx * 0.5 + 0.5) * 255);
+                    nData[i + 1] = Math.round((ny * 0.5 + 0.5) * 255);
+                    nData[i + 2] = Math.round((nz * 0.5 + 0.5) * 255);
+                    nData[i + 3] = 255;
+                }
+            }
+
+            nCtx.putImageData(normalImageData, 0, 0);
+            return new THREE.CanvasTexture(normalCanvas);
+        }
+
+        function createRoughnessMap(width, height, drawText) {
+            const canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            const ctx = canvas.getContext('2d');
+
+            ctx.fillStyle = '#a0a0a0';
+            ctx.fillRect(0, 0, width, height);
+
+            const imageData = ctx.getImageData(0, 0, width, height);
+            const data = imageData.data;
+            for (let i = 0; i < data.length; i += 4) {
+                const noise = (Math.random() - 0.5) * 15;
+                data[i] += noise; data[i+1] += noise; data[i+2] += noise;
+            }
+            ctx.putImageData(imageData, 0, 0);
+
+            drawText(ctx, width, height, '#282828');
+            return new THREE.CanvasTexture(canvas);
+        }
+
+        await document.fonts.ready;
+
+        const frontColor = createColorMap(texSize, texH, drawFrontText);
+        const frontNormal = heightToNormals(createHeightMap(texSize, texH, drawFrontText), 3.5);
+        const frontRoughness = createRoughnessMap(texSize, texH, drawFrontText);
+
+        const backColor = createColorMap(texSize, texH, drawBackText);
+        const backNormal = heightToNormals(createHeightMap(texSize, texH, drawBackText), 3.5);
+        const backRoughness = createRoughnessMap(texSize, texH, drawBackText);
+
+        const shape = new THREE.Shape();
+        const rad = 0.03;
+        const cw = cardWidth / 2;
+        const ch = cardHeight / 2;
+        shape.moveTo(-cw + rad, -ch);
+        shape.lineTo(cw - rad, -ch);
+        shape.quadraticCurveTo(cw, -ch, cw, -ch + rad);
+        shape.lineTo(cw, ch - rad);
+        shape.quadraticCurveTo(cw, ch, cw - rad, ch);
+        shape.lineTo(-cw + rad, ch);
+        shape.quadraticCurveTo(-cw, ch, -cw, ch - rad);
+        shape.lineTo(-cw, -ch + rad);
+        shape.quadraticCurveTo(-cw, -ch, -cw + rad, -ch);
+
+        const geometry = new THREE.ExtrudeGeometry(shape, {
+            depth: cardDepth,
+            bevelEnabled: true,
+            bevelThickness: 0.003,
+            bevelSize: 0.003,
+            bevelSegments: 3
+        });
+        geometry.center();
+
+        const posAttr = geometry.attributes.position;
+        const normalAttr = geometry.attributes.normal;
+        const uvAttr = geometry.attributes.uv;
+        const vertCount = posAttr.count;
+
+        const frontVerts = [];
+        const backVerts = [];
+        const sideVerts = [];
+
+        for (let i = 0; i < vertCount; i += 3) {
+            const nz0 = normalAttr.getZ(i);
+            const nz1 = normalAttr.getZ(i + 1);
+            const nz2 = normalAttr.getZ(i + 2);
+            const avgNz = (nz0 + nz1 + nz2) / 3;
+
+            const triData = [];
+            for (let v = 0; v < 3; v++) {
+                triData.push({
+                    pos: [posAttr.getX(i+v), posAttr.getY(i+v), posAttr.getZ(i+v)],
+                    norm: [normalAttr.getX(i+v), normalAttr.getY(i+v), normalAttr.getZ(i+v)],
+                    uv: [uvAttr.getX(i+v), uvAttr.getY(i+v)]
+                });
+            }
+
+            if (avgNz > 0.5) frontVerts.push(triData);
+            else if (avgNz < -0.5) backVerts.push(triData);
+            else sideVerts.push(triData);
+        }
+
+        const allTris = [...frontVerts, ...backVerts, ...sideVerts];
+        const newPos = new Float32Array(vertCount * 3);
+        const newNorm = new Float32Array(vertCount * 3);
+        const newUv = new Float32Array(vertCount * 2);
+
+        let vi = 0;
+        for (const tri of allTris) {
+            for (const vert of tri) {
+                newPos[vi * 3] = vert.pos[0];
+                newPos[vi * 3 + 1] = vert.pos[1];
+                newPos[vi * 3 + 2] = vert.pos[2];
+                newNorm[vi * 3] = vert.norm[0];
+                newNorm[vi * 3 + 1] = vert.norm[1];
+                newNorm[vi * 3 + 2] = vert.norm[2];
+                newUv[vi * 2] = vert.uv[0];
+                newUv[vi * 2 + 1] = vert.uv[1];
+                vi++;
+            }
+        }
+
+        geometry.setAttribute('position', new THREE.BufferAttribute(newPos, 3));
+        geometry.setAttribute('normal', new THREE.BufferAttribute(newNorm, 3));
+        geometry.setAttribute('uv', new THREE.BufferAttribute(newUv, 2));
+
+        const frontCount = frontVerts.length * 3;
+        const backCount = backVerts.length * 3;
+        const sideCount = sideVerts.length * 3;
+
+        geometry.clearGroups();
+        geometry.addGroup(0, frontCount, 0);
+        geometry.addGroup(frontCount, backCount, 1);
+        geometry.addGroup(frontCount + backCount, sideCount, 2);
+
+        const finalUv = geometry.attributes.uv;
+        const finalPos = geometry.attributes.position;
+
+        for (let i = 0; i < frontCount; i++) {
+            const x = finalPos.getX(i);
+            const y = finalPos.getY(i);
+            finalUv.setXY(i, (x / cardWidth) + 0.5, (y / cardHeight) + 0.5);
+        }
+
+        for (let i = frontCount; i < frontCount + backCount; i++) {
+            const x = finalPos.getX(i);
+            const y = finalPos.getY(i);
+            finalUv.setXY(i, 1.0 - ((x / cardWidth) + 0.5), (y / cardHeight) + 0.5);
+        }
+
+        const frontMaterial = new THREE.MeshPhysicalMaterial({
+            map: frontColor,
+            normalMap: frontNormal,
+            normalScale: new THREE.Vector2(1.2, 1.2),
+            roughnessMap: frontRoughness,
+            roughness: 0.7,
+            metalness: 0.0,
+            clearcoat: 0.06,
+            clearcoatRoughness: 0.6,
+            reflectivity: 0.15,
+            envMapIntensity: 0.3,
+            sheen: 0.05,
+            sheenRoughness: 0.6,
+            sheenColor: new THREE.Color(0xfff8f0),
+        });
+
+        const backMaterial = new THREE.MeshPhysicalMaterial({
+            map: backColor,
+            normalMap: backNormal,
+            normalScale: new THREE.Vector2(1.2, 1.2),
+            roughnessMap: backRoughness,
+            roughness: 0.7,
+            metalness: 0.0,
+            clearcoat: 0.06,
+            clearcoatRoughness: 0.6,
+            reflectivity: 0.15,
+            envMapIntensity: 0.3,
+            sheen: 0.05,
+            sheenRoughness: 0.6,
+            sheenColor: new THREE.Color(0xfff8f0),
+        });
+
+        const edgeMaterial = new THREE.MeshPhysicalMaterial({
+            color: new THREE.Color('#ede7dc'),
+            roughness: 0.75,
+            metalness: 0.0,
+        });
+
+        const card = new THREE.Mesh(geometry, [frontMaterial, backMaterial, edgeMaterial]);
+        scene.add(card);
+
+        const keyLight = new THREE.DirectionalLight(0xfff5e6, 3.0);
+        keyLight.position.set(3, 4, 5);
+        scene.add(keyLight);
+
+        const fillLight = new THREE.DirectionalLight(0xe8f0ff, 0.8);
+        fillLight.position.set(-4, 1, 3);
+        scene.add(fillLight);
+
+        const rimLight = new THREE.DirectionalLight(0xffffff, 1.2);
+        rimLight.position.set(0, -2, -5);
+        scene.add(rimLight);
+
+        const topLight = new THREE.DirectionalLight(0xfffff0, 1.5);
+        topLight.position.set(0, 6, 2);
+        scene.add(topLight);
+
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.4);
+        scene.add(ambientLight);
+
+        const pointLight = new THREE.PointLight(0xfff8f0, 2.0, 10);
+        pointLight.position.set(2, 2, 4);
+        scene.add(pointLight);
+
+        const pmremGenerator = new THREE.PMREMGenerator(renderer);
+        const envScene = new THREE.Scene();
+
+        envScene.add(new THREE.Mesh(
+            new THREE.SphereGeometry(5, 32, 32),
+            new THREE.MeshBasicMaterial({ color: 0x1a1a1a, side: THREE.BackSide })
+        ));
+
+        const panelGeo = new THREE.PlaneGeometry(3, 1);
+        const panelMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+
+        const p1 = new THREE.Mesh(panelGeo, panelMat);
+        p1.position.set(0, 3.5, -2); p1.lookAt(0,0,0);
+        envScene.add(p1);
+
+        const p2 = new THREE.Mesh(panelGeo, panelMat.clone());
+        p2.position.set(3, 1, -3); p2.lookAt(0,0,0);
+        envScene.add(p2);
+
+        const p3 = new THREE.Mesh(new THREE.PlaneGeometry(2, 0.5), new THREE.MeshBasicMaterial({ color: 0xaaaaaa }));
+        p3.position.set(-3, 2, -2); p3.lookAt(0,0,0);
+        envScene.add(p3);
+
+        const envMap = pmremGenerator.fromScene(envScene).texture;
+        frontMaterial.envMap = envMap;
+        backMaterial.envMap = envMap;
+        scene.environment = envMap;
+
+        const bgCanvas = document.createElement('canvas');
+        bgCanvas.width = 512;
+        bgCanvas.height = 512;
+        const bgCtx = bgCanvas.getContext('2d');
+        const bgGrad = bgCtx.createRadialGradient(256, 256, 0, 256, 256, 360);
+        bgGrad.addColorStop(0, '#1c1916');
+        bgGrad.addColorStop(0.6, '#0e0c0a');
+        bgGrad.addColorStop(1, '#050505');
+        bgCtx.fillStyle = bgGrad;
+        bgCtx.fillRect(0, 0, 512, 512);
+        const bgTexture = new THREE.CanvasTexture(bgCanvas);
+        bgTexture.colorSpace = THREE.SRGBColorSpace;
+        scene.background = bgTexture;
+
+        let isInteracting = false;
+        let idleTime = 0;
+
+        controls.addEventListener('start', () => { isInteracting = true; });
+        controls.addEventListener('end', () => { isInteracting = false; idleTime = 0; });
+
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const elapsed = clock.getElapsedTime();
+
+            if (!isInteracting) {
+                idleTime += 0.016;
+                card.position.y = Math.sin(elapsed * 0.8) * 0.03;
+                card.position.x = Math.sin(elapsed * 0.5) * 0.01;
+
+                if (idleTime > 2) {
+                    card.rotation.y += 0.0008;
+                }
+            }
+
+            pointLight.position.x = 2 + Math.sin(elapsed * 0.7) * 0.5;
+            pointLight.position.y = 2 + Math.cos(elapsed * 0.5) * 0.3;
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+    </script>
+</body>
+</html>
