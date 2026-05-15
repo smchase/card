@@ -528,6 +528,72 @@
         bgTexture.colorSpace = THREE.SRGBColorSpace;
         scene.background = bgTexture;
 
+        const linkRegions = (() => {
+            const canvas = document.createElement('canvas');
+            canvas.width = texSize;
+            canvas.height = texH;
+            const ctx = canvas.getContext('2d');
+            ctx.font = `400 ${texH * 0.038}px "EB Garamond", "Garamond", serif`;
+
+            const marginRight = 0.92;
+            const links = [
+                { label: 'email', url: 'mailto:hi@simonchase.com', text: 'hi@simonchase.com', yCenter: 0.65 },
+                { label: 'linkedin', url: 'https://linkedin.com/in/simon-chase', text: 'linkedin.com/in/simon-chase', yCenter: 0.73 },
+                { label: 'github', url: 'https://github.com/smchase', text: 'github.com/smchase', yCenter: 0.81 },
+            ];
+
+            return links.map(link => {
+                const textWidth = ctx.measureText(link.text).width / texSize;
+                return { ...link, xRight: marginRight, xLeft: marginRight - textWidth };
+            });
+        })();
+        const linkHalfHeight = texH * 0.038 / texH * 0.6;
+
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+
+        function getHitLink(event) {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObject(card);
+            if (intersects.length === 0) return null;
+
+            const hit = intersects[0];
+            if (hit.faceIndex * 3 >= frontCount) return null;
+
+            const u = hit.uv.x;
+            const canvasY = 1 - hit.uv.y;
+
+            for (const link of linkRegions) {
+                if (u >= link.xLeft && u <= link.xRight &&
+                    canvasY >= link.yCenter - linkHalfHeight &&
+                    canvasY <= link.yCenter + linkHalfHeight) {
+                    return link;
+                }
+            }
+            return null;
+        }
+
+        let pointerDownPos = null;
+        renderer.domElement.addEventListener('pointerdown', (e) => {
+            pointerDownPos = { x: e.clientX, y: e.clientY };
+        });
+        renderer.domElement.addEventListener('pointerup', (e) => {
+            if (!pointerDownPos) return;
+            const dx = e.clientX - pointerDownPos.x;
+            const dy = e.clientY - pointerDownPos.y;
+            if (dx * dx + dy * dy < 25) {
+                const link = getHitLink(e);
+                if (link) window.open(link.url, '_blank');
+            }
+            pointerDownPos = null;
+        });
+        renderer.domElement.addEventListener('pointermove', (e) => {
+            const link = getHitLink(e);
+            renderer.domElement.style.cursor = link ? 'pointer' : '';
+        });
+
         let isInteracting = false;
         let idleTime = 0;
 
